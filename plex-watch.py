@@ -19,7 +19,8 @@ class Display:
   
   def screen(self, message):
     print(message, end='\r')
-
+    
+# taken from https://www.geeksforgeeks.org/create-a-credential-file-using-python/
 class Credentials():
 
 	def __init__(self, cred_file, key_file):
@@ -362,7 +363,7 @@ def main():
     reader = ServerReader(server)
 
     data.store_sections(reader.get_sections())
-    
+
     for section in data.sections:
       data.store_titles(reader.get_titles(section))
 
