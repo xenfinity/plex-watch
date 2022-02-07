@@ -175,6 +175,8 @@ class ServerData:
     self.sections = None
     self.shows = {}
     self.movies = {}
+    self.ep_status = {}
+    self.movie_status = {}
 
   def store_titles(self, titles):
     lib_name, lib_type, titles = titles
@@ -186,6 +188,11 @@ class ServerData:
   def store_sections(self, sections):
     self.sections = sections
 
+  def store_ep_status(self, status):
+    self.ep_status = self.ep_status.update(status)
+
+  def store_movie_status(self, status):
+    self.movie_status = self.movie_status.update(status)
 
 class ServerReader:
 
@@ -193,7 +200,6 @@ class ServerReader:
     self.server = server
 
   def get_sections(self):
-    print(self.server)
     sections = self.server.library.sections()
     return list(map((lambda x: x.title), sections))
 
@@ -203,28 +209,41 @@ class ServerReader:
     titles = set(list(map((lambda x: x.title), lib.search())))
     return [lib_name, lib_type, titles]
   
-  def find_watched_status(self, titles):
-    lib_name, lib_type, titles = titles
+  def get_show_status(self, titles, lib_name):
     num_of_titles = len(titles)
     server_name = self.server.friendlyName
     status = {}
     display = Display()
 
-    if lib_type == 'show':
-      for index, show_name in enumerate(titles):
-        display.screen(f'Reading {server_name} ({index + 1}/{num_of_titles})...{show_name}'.ljust(100))
-        show = self.server.library.section(lib_name).get(show_name)
-        for ep in show.episodes():
-            key = f'{show_name}<->{ep.seasonNumber}<->{ep.episodeNumber}'
-            status[key] = ep.isWatched
-      return status
+    for index, show_name in enumerate(titles):
+      display.screen(f'Reading shows on {server_name} ({index + 1}/{num_of_titles})...{show_name}'.ljust(100))
+      show = self.server.library.section(lib_name).get(show_name)
+      for ep in show.episodes():
+          key = f'{show_name}<->{ep.seasonNumber}<->{ep.episodeNumber}'
+          status[key] = {
+            'server' : server_name,
+            'lib_name' : lib_name,
+            'type' : 'episode',
+            'watched' : ep.isWatched
+            }
+    return status
 
-    if lib_type == 'movie':
-      for index, mov_name in enumerate(titles):
-        display.screen(f'Reading {server_name} ({index + 1}/{num_of_titles})...{mov_name}'.ljust(100))
-        movie = self.server.library.section(lib_name).get(mov_name)
-        status[mov_name] = movie.isWatched
-      return status
+  def get_movie_status(self, titles, lib_name):
+    num_of_titles = len(titles)
+    server_name = self.server.friendlyName
+    status = {}
+    display = Display()
+
+    for index, mov_name in enumerate(titles):
+      display.screen(f'Reading movies on {server_name} ({index + 1}/{num_of_titles})...{mov_name}'.ljust(100))
+      movie = self.server.library.section(lib_name).get(mov_name)
+      status[mov_name] = {
+            'server' : server_name,
+            'lib_name' : lib_name,
+            'type' : 'movie',
+            'watched' : movie.isWatched
+            }
+    return status
   
   def get_mov(self, key):
     for lib in self.shows:
@@ -248,89 +267,44 @@ class ServerReader:
   def reading_done(self, titles):
     num_of_titles = len(titles)
     return f'Reading {self.server.friendlyName} ({num_of_titles}/{num_of_titles})...Done!'.ljust(100)
+
+
+
+class Processor:
+  all_shows = []
+  all_movies = []
+  
+  def cache_all_titles(self, server_attr):
+
+    for server_name, attr in server_attr.items():
+      data = attr['data']
+      shows = set()
+      movies = set()
+      for lib_name, titles in data.shows.items():
+        shows = shows.union(titles)
+      for lib_name, titles in data.movies.items():
+        movies = movies.union(titles)
+        
+      self.all_shows.append(shows)
+      self.all_movies.append(movies)
+
+  def get_common(self):
+
+    common = {
+      'shows' : set.intersection(*self.all_shows),
+      'movies' : set.intersection(*self.all_movies)
+    }
+    return common
+      
+  def get_difference(self):
     
-# TV_1 = conn_1.library.section('TV Shows')
-# TV_2 = conn_2.library.section('TV Shows')
-
-# Movies_1 = conn_1.library.section('Movies')
-# Movies_2 = conn_2.library.section('Movies')
-
-
-	
-
-
-# shows_1 = list(map((lambda x: x.title), TV_1.search()))
-# shows_2 = list(map((lambda x: x.title), TV_2.search()))
-
-# dic_1 = build_show_dic(shows_1)
-# dic_2 = build_show_dic(shows_2)
-
-# show_set_1 = set(dic_1.keys())
-# show_set_2 = set(dic_2.keys())
-
-# difference = show_set_1.symmetric_difference(show_set_2)
-# diff_1 = []
-# diff_2 = []
-
-# logging.info(f'{conn_1.friendlyName} Shows - {len(shows_1)}')
-# for show in dic_1:
-#     break
-#     logging.info(f'\t{dic_1[show]}')
-	
-# logging.info(f'{conn_2.friendlyName} Shows - {len(shows_2)}')
-# for show in dic_2:
-#     break
-#     logging.info(f'\t{dic_2[show]}')
-	
-
-# for show in difference:
-#     if show in dic_1:
-#         diff_1.append(dic_1[show])
-#     else:
-#         diff_2.append(dic_2[show])
-
-# diff_1.sort()
-# diff_2.sort()
-
-# logging.info(f'{conn_1.friendlyName}')
-# for title in diff_1:
-#     logging.info(f'    {title}')
-		
-# logging.info(f'{conn_2.friendlyName}')
-# for title in diff_2:
-#     logging.info(f'    {title}')
-
-# common_shows = show_set_1 & show_set_2
-# common_shows = sorted(common_shows)
-# num_of_shows = len(common_shows)
-
-# watched_1 = find_watched_status(common_shows, conn_1, dic_1)
-# print(reading_done(conn_1, common_shows))
-# watched_2 = find_watched_status(common_shows, conn_2, dic_2)
-# print(reading_done(conn_2, common_shows))
-
-# def screen(message, title, num=none, den=none, ):
-#     output = f'{message} ({index}/{num_eps})...{title}'.ljust(100)
-#     print(output , end='\r')
-
-# num_eps = len(watched_1)
-# for index, episode in enumerate(watched_1):
-#     show, sNum, eNum = episode.split('<->')
-#     screen('Synchronizing watched status', f'{dic_1[show]}-S{sNum}E{eNum}', index, num_eps )
-#     print(screen , end='\r') 
-#     if episode in watched_2:
-#         if watched_1[episode] != watched_2[episode]:
-#             if watched_1[episode]:
-#                 get_ep(episode, conn_2, dic_2).markWatched()
-#             else:
-#                 get_ep(episode, conn_1, dic_1).markWatched()
-
-class FileProcessor:
-  def __init__(self):
-    None
+    difference = {
+      'shows' : set.symmetric_difference(*self.all_shows),
+      'movies' : set.symmetric_difference(*self.all_movies)
+    }
+    return difference
   
 
-  
 
 def main():
   cred_file = 'plex-creds.ini'
@@ -352,11 +326,12 @@ def main():
   parser.parse_json(json_file)
   server_names = parser.get_server_names()
 
-  srvr_factory = ServerFactory()
+  server_factory = ServerFactory()
   servers = {}
+  server_attr = {}
 
   for name in server_names:
-    servers[name] = srvr_factory.get_conn_from_name(account, name)
+    servers[name] = server_factory.get_conn_from_name(account, name)
 
   for name, server in servers.items():
     data = ServerData(server)
@@ -366,16 +341,51 @@ def main():
 
     for section in data.sections:
       data.store_titles(reader.get_titles(section))
+    
+    server_attr[name] = {
+      'server' : server,
+      'data' : data,
+      'reader' : reader
+    }
 
+  process = Processor()
+  process.cache_all_titles(server_attr)
 
+  common = process.get_common()
+  difference = process.get_difference()
+  
+  for server_name, attr in server_attr.items():
+    data = attr['data']
+    reader = attr['reader']
+
+    for lib_name, titles in data.shows.items():
+      common_titles_in_lib = titles.intersection(common['shows'])
+      show_statuses = reader.get_show_status(common_titles_in_lib, lib_name)
+      data.store_ep_status(show_statuses)
+
+    for lib_name, titles in data.movies.items():
+      common_titles_in_lib = titles.intersection(common['movies'])
+      movie_statuses = reader.get_movie_status(common_titles_in_lib, lib_name)
+      data.store_movie_status(movie_statuses)
+    
+    print(data.ep_status)
+    print(data.movie_status)
 
   # print(f'Synchronizing watched status ({num_eps}/{num_eps})...Done!'.ljust(100))
   # print('Synchronization complete!')
-
-  
 
 if __name__ == "__main__":
 	main()
 				
 
-
+# num_eps = len(watched_1)
+# for index, episode in enumerate(watched_1):
+#     show, sNum, eNum = episode.split('<->')
+#     screen('Synchronizing watched status', f'{dic_1[show]}-S{sNum}E{eNum}', index, num_eps )
+#     print(screen , end='\r') 
+#     if episode in watched_2:
+#         if watched_1[episode] != watched_2[episode]:
+#             if watched_1[episode]:
+#                 get_ep(episode, conn_2, dic_2).markWatched()
+#             else:
+#                 get_ep(episode, conn_1, dic_1).markWatched()
