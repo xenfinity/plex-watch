@@ -207,42 +207,25 @@ class ServerReader:
     titles = set(list(map((lambda x: x.title), lib.search())))
     return [lib_name, lib_type, titles]
   
-  def get_show_status(self, titles, lib_name):
+  def get_status(self, titles, lib_name):
     num_of_titles = len(titles)
     server_name = self.server.friendlyName
+    lib_type = self.server.library.section(lib_name).type
     status = {}
     display = Display()
 
-    for index, show_name in enumerate(titles):
-      display.screen(f'Reading shows on {server_name} ({index + 1}/{num_of_titles})...{show_name}'.ljust(100))
-      show = self.server.library.section(lib_name).get(show_name)
-      for ep in show.episodes():
-          key = f'{show_name}<->{ep.seasonNumber}<->{ep.episodeNumber}'
-          status[key] = {
-            'server' : server_name,
-            'lib_name' : lib_name,
-            'type' : 'episode',
-            'watched' : ep.isWatched
-            }
+    for index, title in enumerate(titles):
+      display.screen(f'Reading shows on {server_name} ({index + 1}/{num_of_titles})...{title}'.ljust(100))
+      title_object = self.server.library.section(lib_name).get(title)
+
+      if lib_type == 'show':
+        for ep in title_object.episodes():
+            key = f'{title}<->{ep.seasonNumber}<->{ep.episodeNumber}'
+            status[key] = ep.isWatched
+      elif lib_type == 'movie':
+        status[title] = title_object.isWatched
     return status
 
-  def get_movie_status(self, titles, lib_name):
-    num_of_titles = len(titles)
-    server_name = self.server.friendlyName
-    status = {}
-    display = Display()
-
-    for index, mov_name in enumerate(titles):
-      display.screen(f'Reading movies on {server_name} ({index + 1}/{num_of_titles})...{mov_name}'.ljust(100))
-      movie = self.server.library.section(lib_name).get(mov_name)
-      status[mov_name] = {
-            'server' : server_name,
-            'lib_name' : lib_name,
-            'type' : 'movie',
-            'watched' : movie.isWatched
-            }
-    return status
-  
   def get_mov(self, key):
     for lib in self.shows:
       try:
@@ -274,13 +257,15 @@ class Processor:
     self.server_attr = server_attr
     self.all_shows = []
     self.all_movies = []
-    self.ep_status = {}
-    self.movie_status = {}
+    self.status = {}
+    self.to_be_marked = {}
 
     self.cache_all_titles()
     self.set_common()
     self.set_difference()
     self.set_watched_status()
+    # self.find_titles_to_mark()
+    # self.mark_watched()
 
   def cache_all_titles(self):
 
@@ -314,16 +299,37 @@ class Processor:
     for server_name, attr in self.server_attr.items():
       data = attr['data']
       reader = attr['reader']
+      ep_status = {}
+      movie_status = {}
       
       for lib_name, titles in data.shows.items():
         common_titles_in_lib = titles.intersection(self.common['shows'])
-        show_statuses = reader.get_show_status(common_titles_in_lib, lib_name)
-        self.ep_status.update(show_statuses)
+        show_statuses = reader.get_status(common_titles_in_lib, lib_name)
+        ep_status.update(show_statuses)
         
       for lib_name, titles in data.movies.items():
         common_titles_in_lib = titles.intersection(self.common['movies'])
-        movie_statuses = reader.get_movie_status(common_titles_in_lib, lib_name)
-        self.movie_status.update(movie_statuses)
+        movie_statuses = reader.get_status(common_titles_in_lib, lib_name)
+        movie_status.update(movie_statuses)
+
+      self.status[server_name] = {'episodes' : ep_status, 'movies' : movie_status}
+
+  # def find_titles_to_modify(self):
+  #   num_eps = len(watched_1)
+  #   for episode, data in self.ep_status.items():
+  #       show, sNum, eNum = episode.split('<->')
+  #       screen('Synchronizing watched status', f'{show}-S{sNum}E{eNum}', index, num_eps )
+  #       print(screen , end='\r') 
+  #       if episode in watched_2:
+  #           if watched_1[episode] != watched_2[episode]:
+  #               if watched_1[episode]:
+  #                   get_ep(episode, conn_2, dic_2).markWatched()
+  #               else:
+  #                   get_ep(episode, conn_1, dic_1).markWatched()
+  
+  # def mark_watched(self):
+  #   None
+
 
 
 def main():
@@ -353,8 +359,7 @@ def main():
   for name in server_names:
     servers[name] = server_factory.get_conn_from_name(account, name)
 
-  for name, server in servers.items():
-    
+  for name, server in servers.items():   
     reader = ServerReader(server)
     data = ServerData(server, reader)
 
@@ -366,7 +371,8 @@ def main():
 
   process = Processor(server_attr)
   
-  
+  print(process.status)
+
 
   # print(f'Synchronizing watched status ({num_eps}/{num_eps})...Done!'.ljust(100))
   # print('Synchronization complete!')
