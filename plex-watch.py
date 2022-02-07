@@ -189,10 +189,10 @@ class ServerData:
     self.sections = sections
 
   def store_ep_status(self, status):
-    self.ep_status = self.ep_status.update(status)
+    self.ep_status.update(status)
 
   def store_movie_status(self, status):
-    self.movie_status = self.movie_status.update(status)
+    self.movie_status.update(status)
 
 class ServerReader:
 
