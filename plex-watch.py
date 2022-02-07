@@ -106,21 +106,24 @@ class Configuration:
   def __init__(self, json_file, account):
     self.json_file = json_file
 
-
 class PlexAccountFactory:
+
+  def __init__(self, cred_file, key_file):
+      self.cred_file = cred_file
+      self.key_file = key_file
   
-  def get_account_from_creds(self, cred_file, key_file):
-    username, password = self.decrypt_credentials(cred_file, key_file)
+  def get_account_from_creds(self):
+    username, password = self.decrypt_credentials()
     return MyPlexAccount(username, password)
 
-  def decrypt_credentials(self, cred_file, key_file):
+  def decrypt_credentials(self):
     key = ''
  
-    with open(key_file,'r') as key_in:
+    with open(self.key_file,'r') as key_in:
         key = key_in.read().encode()
     
     f = Fernet(key)
-    with open(cred_file,'r') as cred_in:
+    with open(self.cred_file,'r') as cred_in:
         lines = cred_in.readlines()
         config = {}
         for line in lines:
@@ -132,7 +135,7 @@ class PlexAccountFactory:
         password = f.decrypt(config['Password'].encode()).decode()
         return [username, password]
 
-class ConfigFileBuilder:
+class FileBuilder:
 
   def build_credentials(self, cred_file, key_file):
     creds = Credentials(cred_file, key_file)
@@ -149,11 +152,13 @@ class ConfigFileBuilder:
 
 class MetadataParser:
 
-  data = None
+  def __init__(self, json_file_name):
+    self.data = None
+    self.json_file_name = json_file_name
   
-  def parse_json(self, server_info):
+  def parse_json(self):
     json_string = None
-    with open(server_info) as json_file:
+    with open(self.json_file_name) as json_file:
       json_string = json.load(json_file)
     self.data = json_string['servers']
     
@@ -170,29 +175,22 @@ class ServerFactory:
 
 class ServerData:
 
-  def __init__(self, server):
+  def __init__(self, server, reader):
     self.server = server
-    self.sections = None
+    self.reader = reader
     self.shows = {}
     self.movies = {}
-    self.ep_status = {}
-    self.movie_status = {}
 
-  def store_titles(self, titles):
-    lib_name, lib_type, titles = titles
-    if lib_type == 'show':
-      self.shows[lib_name] = titles
-    elif lib_type == 'movie':
-      self.movies[lib_name] = titles
+    self.sections = reader.get_sections()
+    self.store_titles()
 
-  def store_sections(self, sections):
-    self.sections = sections
-
-  def store_ep_status(self, status):
-    self.ep_status.update(status)
-
-  def store_movie_status(self, status):
-    self.movie_status.update(status)
+  def store_titles(self):
+    for section in self.sections:
+      lib_name, lib_type, titles = self.reader.get_titles(section)
+      if lib_type == 'show':
+        self.shows[lib_name] = titles
+      elif lib_type == 'movie':
+        self.movies[lib_name] = titles
 
 class ServerReader:
 
@@ -271,12 +269,23 @@ class ServerReader:
 
 
 class Processor:
-  all_shows = []
-  all_movies = []
   
-  def cache_all_titles(self, server_attr):
+  def __init__(self, server_attr):
+    self.server_attr = server_attr
+    self.all_shows = []
+    self.all_movies = []
+    self.ep_status = {}
+    self.movie_status = {}
 
-    for server_name, attr in server_attr.items():
+    self.cache_all_titles()
+    self.set_common()
+    self.set_difference()
+    self.set_watched_status()
+
+  def cache_all_titles(self):
+
+    for server_name, attr in self.server_attr.items():
+      print(server_name)
       data = attr['data']
       shows = set()
       movies = set()
@@ -284,46 +293,57 @@ class Processor:
         shows = shows.union(titles)
       for lib_name, titles in data.movies.items():
         movies = movies.union(titles)
-        
       self.all_shows.append(shows)
       self.all_movies.append(movies)
 
-  def get_common(self):
+  def set_common(self):
 
-    common = {
+    self.common = {
       'shows' : set.intersection(*self.all_shows),
       'movies' : set.intersection(*self.all_movies)
     }
-    return common
       
-  def get_difference(self):
+  def set_difference(self):
     
-    difference = {
+    self.difference = {
       'shows' : set.symmetric_difference(*self.all_shows),
       'movies' : set.symmetric_difference(*self.all_movies)
     }
-    return difference
   
+  def set_watched_status(self):
+    for server_name, attr in self.server_attr.items():
+      data = attr['data']
+      reader = attr['reader']
+      
+      for lib_name, titles in data.shows.items():
+        common_titles_in_lib = titles.intersection(self.common['shows'])
+        show_statuses = reader.get_show_status(common_titles_in_lib, lib_name)
+        self.ep_status.update(show_statuses)
+        
+      for lib_name, titles in data.movies.items():
+        common_titles_in_lib = titles.intersection(self.common['movies'])
+        movie_statuses = reader.get_movie_status(common_titles_in_lib, lib_name)
+        self.movie_status.update(movie_statuses)
 
 
 def main():
   cred_file = 'plex-creds.ini'
   key_file = 'plex-creds.key'
-  json_file = 'server-info.json'
+  json_file_name = 'server-info.json'
 
-  file_builder = ConfigFileBuilder()
+  file_builder = FileBuilder()
 
   if not path.exists(cred_file) or not path.exists(key_file):
     file_builder.build_credentials(cred_file, key_file)
 
-  acct_factory = PlexAccountFactory()
-  account = acct_factory.get_account_from_creds(cred_file, key_file)
+  acct_factory = PlexAccountFactory(cred_file, key_file)
+  account = acct_factory.get_account_from_creds()
   
-  if not path.exists(json_file):
-    file_builder.build_json(json_file, account)
+  if not path.exists(json_file_name):
+    file_builder.build_json(json_file_name, account)
     
-  parser = MetadataParser()
-  parser.parse_json(json_file)
+  parser = MetadataParser(json_file_name)
+  parser.parse_json()
   server_names = parser.get_server_names()
 
   server_factory = ServerFactory()
@@ -334,42 +354,19 @@ def main():
     servers[name] = server_factory.get_conn_from_name(account, name)
 
   for name, server in servers.items():
-    data = ServerData(server)
-    reader = ServerReader(server)
-
-    data.store_sections(reader.get_sections())
-
-    for section in data.sections:
-      data.store_titles(reader.get_titles(section))
     
+    reader = ServerReader(server)
+    data = ServerData(server, reader)
+
     server_attr[name] = {
       'server' : server,
       'data' : data,
       'reader' : reader
     }
 
-  process = Processor()
-  process.cache_all_titles(server_attr)
-
-  common = process.get_common()
-  difference = process.get_difference()
+  process = Processor(server_attr)
   
-  for server_name, attr in server_attr.items():
-    data = attr['data']
-    reader = attr['reader']
-
-    for lib_name, titles in data.shows.items():
-      common_titles_in_lib = titles.intersection(common['shows'])
-      show_statuses = reader.get_show_status(common_titles_in_lib, lib_name)
-      data.store_ep_status(show_statuses)
-
-    for lib_name, titles in data.movies.items():
-      common_titles_in_lib = titles.intersection(common['movies'])
-      movie_statuses = reader.get_movie_status(common_titles_in_lib, lib_name)
-      data.store_movie_status(movie_statuses)
-    
-    print(data.ep_status)
-    print(data.movie_status)
+  
 
   # print(f'Synchronizing watched status ({num_eps}/{num_eps})...Done!'.ljust(100))
   # print('Synchronization complete!')
