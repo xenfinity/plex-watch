@@ -1,3 +1,4 @@
+from mimetypes import init
 from plexapi.myplex import MyPlexAccount
 from cryptography.fernet import Fernet
 import ctypes
@@ -137,11 +138,11 @@ class PlexAccountFactory:
 
 class FileBuilder:
 
-  def build_credentials(self, cred_file, key_file):
-    creds = Credentials(cred_file, key_file)
+  def build_credentials(self, cred_file_name, key_file_name):
+    creds = Credentials(cred_file_name, key_file_name)
 
-    creds.username = input("Enter UserName:")
-    creds.password = input("Enter Password:")
+    creds.username = input("Enter Plex Email:")
+    creds.password = input("Enter Plex Password:")
 
     creds.create_cred()
     print("Credential files created successfully at {}"
@@ -168,10 +169,54 @@ class MetadataParser:
       server_names.append(server['name'])
     return server_names
 
+# SHOWLIST = [
+#   {
+#     'title' : 'A.P. Bio',
+#     'episodes' : {
+
+
+#     },
+#   }
+#   ]
+# MOVIELIST = ['A.P. Bio', 'Made for Love', 'You', 'Good Eats']
+
+# class Episode:
+#     def __init__(self, episode):
+#         self.episode = episode
+
+# class Library:
+#     def __init__(self):
+#         self.friendlyName = 'test_library'
+#         self.library = []
+    
+#     def section(self, sec_name):
+#         if sec_name == 'TV Shows':
+#             return self.build_library(SHOWLIST)
+
+#     def build_library(self, show_list):
+#       for show in show_list:
+#           episode = Episode(show)
+#           self.library.append(episode)
+#       return self.library
+
+# class PlexServer:
+    
+#     def __init__(self, account, name):
+#         self.account = account
+#         self.friendlyName = name
+#         self.library = Library()
+
+
 class ServerFactory:
 
   def get_conn_from_name(self, account, name):
     return account.resource(name).connect()
+
+  # def get_test_conn(self, account, name):
+  #   return PlexServer(account, name)
+
+
+      
 
 class ServerData:
 
@@ -215,7 +260,7 @@ class ServerReader:
     display = Display()
 
     for index, title in enumerate(titles):
-      display.screen(f'Reading shows on {server_name} ({index + 1}/{num_of_titles})...{title}'.ljust(100))
+      display.screen(f'Reading {lib_type}s on {server_name} ({index + 1}/{num_of_titles})...{title}'.ljust(125))
       title_object = self.server.library.section(lib_name).get(title)
 
       if lib_type == 'show':
@@ -249,7 +294,8 @@ class ServerReader:
     num_of_titles = len(titles)
     return f'Reading {self.server.friendlyName} ({num_of_titles}/{num_of_titles})...Done!'.ljust(100)
 
-
+class ServerWriter:
+  None
 
 class Processor:
   
@@ -257,20 +303,25 @@ class Processor:
     self.server_attr = server_attr
     self.all_shows = []
     self.all_movies = []
+    self.all_episodes = []
+    self.common = None
     self.status = {}
-    self.to_be_marked = {}
+    self.to_be_marked = {
+      'episodes' : [],
+      'movies' : []
+    }
 
     self.cache_all_titles()
     self.set_common()
     self.set_difference()
     self.set_watched_status()
-    # self.find_titles_to_mark()
+    self.set_common_episodes()
+    self.find_titles_to_mark()
     # self.mark_watched()
 
   def cache_all_titles(self):
 
     for server_name, attr in self.server_attr.items():
-      print(server_name)
       data = attr['data']
       shows = set()
       movies = set()
@@ -314,7 +365,34 @@ class Processor:
 
       self.status[server_name] = {'episodes' : ep_status, 'movies' : movie_status}
 
-  # def find_titles_to_modify(self):
+  def set_common_episodes(self):
+    episodes = []
+    for server_name, status_data in self.status.items():
+      data_to_set = set(status_data['episodes'].keys())
+      episodes.append(data_to_set)
+      self.all_episodes.append(episodes)
+    self.common['episodes'] = set.intersection(*episodes)
+
+  def find_titles_to_mark(self):
+    episodes = self.common['episodes']
+    movies = self.common['movies']
+
+    for episode in episodes:
+      watched_arr = []
+      for server_name, status_data in self.status.items():
+        if episode in status_data['episodes']:
+          watched_arr.append(status_data['episodes'][episode])
+      if any(watched_arr) and not all(watched_arr):
+        self.to_be_marked['episodes'].append(episode)
+
+    for movie in movies:
+      watched_arr = []
+      for server_name, status_data in self.status.items():
+        if movie in status_data['movies']:
+          watched_arr.append(status_data['movies'][movie])
+      if any(watched_arr) and not all(watched_arr):
+        self.to_be_marked['movies'].append(movie)
+
   #   num_eps = len(watched_1)
   #   for episode, data in self.ep_status.items():
   #       show, sNum, eNum = episode.split('<->')
@@ -333,16 +411,16 @@ class Processor:
 
 
 def main():
-  cred_file = 'plex-creds.ini'
-  key_file = 'plex-creds.key'
+  cred_file_name = 'plex-creds.ini'
+  key_file_name = 'plex-creds.key'
   json_file_name = 'server-info.json'
 
   file_builder = FileBuilder()
 
-  if not path.exists(cred_file) or not path.exists(key_file):
-    file_builder.build_credentials(cred_file, key_file)
+  if not path.exists(cred_file_name) or not path.exists(key_file_name):
+    file_builder.build_credentials(cred_file_name, key_file_name)
 
-  acct_factory = PlexAccountFactory(cred_file, key_file)
+  acct_factory = PlexAccountFactory(cred_file_name, key_file_name)
   account = acct_factory.get_account_from_creds()
   
   if not path.exists(json_file_name):
@@ -371,7 +449,7 @@ def main():
 
   process = Processor(server_attr)
   
-  print(process.status)
+  print(process.to_be_marked)
 
 
   # print(f'Synchronizing watched status ({num_eps}/{num_eps})...Done!'.ljust(100))
