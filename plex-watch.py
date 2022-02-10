@@ -2,6 +2,7 @@ from mimetypes import init
 from plexapi.myplex import MyPlexAccount
 from cryptography.fernet import Fernet
 import ctypes
+from enum import Enum
 import os
 import sys
 import json
@@ -13,13 +14,24 @@ from datetime import datetime
 # log_name = datetime.now().strftime('watch-sync_%Y-%m-%d_%H-%M')
 # logging.basicConfig(filename=f'{log_name}.log', encoding='utf-8', level=logging.INFO)
 
+
 class Display:
 
-    def print_message(self, message):
-        print(message)
+    def message(self, message):
+        print(message.ljust(150))
 
     def screen(self, message):
-        print(message, end='\r')
+        print(message.ljust(150), end='\r')
+
+
+class Section(Enum):
+
+    SHOW = 'show'
+    MOVIE = 'movie'
+    SHOWS = 'shows'
+    MOVIES = 'movies'
+    EPISODES = 'episodes'
+
 
 # taken from https://www.geeksforgeeks.org/create-a-credential-file-using-python/
 class Credentials():
@@ -102,6 +114,7 @@ class Credentials():
         self.__password = ""
         self.__key = ""
         self.__key_file
+
 
 class PlexAccountFactory:
 
@@ -202,7 +215,6 @@ class MetadataParser:
 #         self.friendlyName = name
 #         self.library = Library()
 
-
 class ServerFactory:
 
     def get_conn_from_name(self, account, name):
@@ -226,9 +238,9 @@ class ServerData:
     def store_titles(self):
         for section in self.sections:
             lib_name, lib_type, titles = self.reader.get_titles(section)
-            if lib_type == 'show':
+            if lib_type == Section.SHOW.value:
                 self.shows[lib_name] = titles
-            elif lib_type == 'movie':
+            elif lib_type == Section.MOVIE.value:
                 self.movies[lib_name] = titles
 
 
@@ -248,9 +260,9 @@ class ServerReader:
     def set_sections_by_type(self):
         sections = self.get_sections()
         for name in sections:
-            if self.server.library.section(name).type == 'show':
+            if self.server.library.section(name).type == Section.SHOW.value:
                 self.show_sections.append(name)
-            elif self.server.library.section(name).type == 'movie':
+            elif self.server.library.section(name).type == Section.MOVIE.value:
                 self.movie_sections.append(name)
 
     def get_titles(self, lib_name):
@@ -269,15 +281,18 @@ class ServerReader:
 
         for index, title in enumerate(titles):
             display.screen(
-                f'Reading {lib_type}s on {server_name} ({index + 1}/{num_of_titles})...{title}'.ljust(125))
+                f'Reading {lib_type}s in {lib_name} on {server_name} ({index + 1}/{num_of_titles})...{title}')
             title_object = self.server.library.section(lib_name).get(title)
 
-            if lib_type == 'show':
+            if lib_type == Section.SHOW.value:
                 for ep in title_object.episodes():
                     key = f'{title}<->{ep.seasonNumber}<->{ep.episodeNumber}'
                     status[key] = ep.isWatched
-            elif lib_type == 'movie':
+            elif lib_type == Section.MOVIE.value:
                 status[title] = title_object.isWatched
+
+        display.message(
+            f'Reading {lib_type}s in {lib_name} on {server_name} ({num_of_titles}/{num_of_titles})...Done!')
         return status
 
     def get_movies(self, movie_name):
@@ -305,37 +320,37 @@ class ServerReader:
                 continue
         return episodes
 
-    def reading_done(self, titles):
-        num_of_titles = len(titles)
-        return f'Reading {self.server.friendlyName} ({num_of_titles}/{num_of_titles})...Done!'.ljust(100)
-
 
 class Processor:
 
     def __init__(self, server_attr):
         self.server_attr = server_attr
-        self.all_shows = []
-        self.all_movies = []
-        self.all_episodes = []
-        self.common = {}
-        self.difference = {}
+        self.all_shows = {}
+        self.all_movies = {}
+        self.all_episodes = {}
+        self.common_shows = {}
+        self.common_movies = {}
+        self.common_episodes = {}
+        self.difference_shows = {}
+        self.difference_movies = {}
+        self.difference_episodes = {}
         self.status = {}
         self.to_be_marked = {
-            'episodes': [],
-            'movies': []
+            Section.EPISODES.value: [],
+            Section.MOVIES.value: []
         }
 
         self.cache_all_titles()
-        self.set_common('shows')
-        self.set_common('movies')
-        self.set_difference('shows')
-        self.set_difference('movies')
+        self.set_common(Section.SHOWS.value)
+        self.set_common(Section.MOVIES.value)
+        self.set_difference(Section.SHOWS.value)
+        self.set_difference(Section.MOVIES.value)
 
         self.set_watched_status()
 
         self.cache_all_episodes()
-        self.set_common('episodes')
-        self.set_difference('episodes')
+        self.set_common(Section.EPISODES.value)
+        self.set_difference(Section.EPISODES.value)
 
         self.find_titles_to_mark()
         self.mark_watched()
@@ -350,31 +365,54 @@ class Processor:
                 shows = shows.union(titles)
             for lib_name, titles in data.movies.items():
                 movies = movies.union(titles)
-            self.all_shows.append(shows)
-            self.all_movies.append(movies)
+            self.all_shows[server_name] = shows
+            self.all_movies[server_name] = movies
 
     def set_common(self, name):
 
         match name:
-            case 'shows':
-                self.common['shows'] = set.intersection(*self.all_shows)
-            case 'movies':
-                self.common['movies'] = set.intersection(*self.all_movies)
-            case 'episodes':
-                self.common['episodes'] = set.intersection(*self.all_episodes)
+            case Section.SHOWS.value:
+                self.common_shows = set.intersection(
+                    *list(self.all_shows.values()))
+            case Section.MOVIES.value:
+                self.common_movies = set.intersection(
+                    *list(self.all_movies.values()))
+            case Section.EPISODES.value:
+                self.common_episodes = set.intersection(
+                    *list(self.all_episodes.values()))
 
     def set_difference(self, name):
 
         match name:
-            case 'shows':
-                self.difference['shows'] = set.symmetric_difference(
-                    *self.all_shows)
-            case 'movies':
-                self.difference['movies'] = set.symmetric_difference(
-                    *self.all_movies)
-            case 'episodes':
-                self.difference['episodes'] = set.symmetric_difference(
-                    *self.all_episodes)
+            case Section.SHOWS.value:
+                for server_name, shows in self.all_shows.items():
+                    difference = shows.symmetric_difference(self.common_shows)
+                    for show in difference:
+                        if show in self.difference_shows:
+                            self.difference_shows[show].append(server_name)
+                        else:
+                            self.difference_shows[show] = [server_name]
+
+            case Section.MOVIES.value:
+                for server_name, movies in self.all_movies.items():
+                    difference = movies.symmetric_difference(
+                        self.common_movies)
+                    for movie in difference:
+                        if movie in self.difference_movies:
+                            self.difference_movies[movie].append(server_name)
+                        else:
+                            self.difference_movies[movie] = [server_name]
+
+            case Section.EPISODES.value:
+                for server_name, episodes in self.all_episodes.items():
+                    difference = episodes.symmetric_difference(
+                        self.common_episodes)
+                    for episode in difference:
+                        if episode in self.difference_episodes:
+                            self.difference_episodes[episode].append(
+                                server_name)
+                        else:
+                            self.difference_episodes[episode] = [server_name]
 
     def set_watched_status(self):
 
@@ -386,51 +424,53 @@ class Processor:
 
             for lib_name, titles in data.shows.items():
                 common_titles_in_lib = titles.intersection(
-                    self.common['shows'])
+                    self.common_shows)
                 show_statuses = reader.get_status(
                     common_titles_in_lib, lib_name)
                 ep_status.update(show_statuses)
 
             for lib_name, titles in data.movies.items():
                 common_titles_in_lib = titles.intersection(
-                    self.common['movies'])
+                    self.common_movies)
                 movie_statuses = reader.get_status(
                     common_titles_in_lib, lib_name)
                 movie_status.update(movie_statuses)
 
             self.status[server_name] = {
-                'episodes': ep_status, 'movies': movie_status}
+                Section.EPISODES.value: ep_status, Section.MOVIES.value: movie_status}
 
     def cache_all_episodes(self):
 
         for server_name, status_data in self.status.items():
-            data_to_set = set(status_data['episodes'].keys())
-            self.all_episodes.append(data_to_set)
+            data_to_set = set(status_data[Section.EPISODES.value].keys())
+            self.all_episodes[server_name] = data_to_set
 
     def find_titles_to_mark(self):
-        episodes = self.common['episodes']
-        movies = self.common['movies']
+        episodes = self.common_episodes
+        movies = self.common_movies
 
         for episode in episodes:
             watched_arr = []
             for server_name, status_data in self.status.items():
-                if episode in status_data['episodes']:
-                    watched_arr.append(status_data['episodes'][episode])
+                if episode in status_data[Section.EPISODES.value]:
+                    watched_arr.append(
+                        status_data[Section.EPISODES.value][episode])
             if any(watched_arr) and not all(watched_arr):
-                self.to_be_marked['episodes'].append(episode)
+                self.to_be_marked[Section.EPISODES.value].append(episode)
 
         for movie in movies:
             watched_arr = []
             for server_name, status_data in self.status.items():
-                if movie in status_data['movies']:
-                    watched_arr.append(status_data['movies'][movie])
+                if movie in status_data[Section.MOVIES.value]:
+                    watched_arr.append(
+                        status_data[Section.MOVIES.value][movie])
             if any(watched_arr) and not all(watched_arr):
-                self.to_be_marked['movies'].append(movie)
+                self.to_be_marked[Section.MOVIES.value].append(movie)
 
     def mark_watched(self):
 
-        episodes_to_mark = self.to_be_marked['episodes']
-        movies_to_mark = self.to_be_marked['movies']
+        episodes_to_mark = self.to_be_marked[Section.EPISODES.value]
+        movies_to_mark = self.to_be_marked[Section.MOVIES.value]
         for server_name, attr in self.server_attr.items():
             reader = attr['reader']
             for episode in episodes_to_mark:
@@ -443,18 +483,22 @@ class Processor:
                 for mov in movies_on_server:
                     mov.markWatched()
 
+
 def main():
     cred_file_name = 'plex-creds.ini'
     key_file_name = 'plex-creds.key'
     json_file_name = 'server-info.json'
 
     file_builder = FileBuilder()
+    display = Display()
 
     if not path.exists(cred_file_name) or not path.exists(key_file_name):
         file_builder.build_credentials(cred_file_name, key_file_name)
 
+    display.screen(f'Retrieving Plex account...')
     acct_factory = PlexAccountFactory(cred_file_name, key_file_name)
     account = acct_factory.get_account_from_creds()
+    display.message(f'Retrieving Plex account...Done!')
 
     if not path.exists(json_file_name):
         file_builder.build_json(json_file_name, account)
@@ -467,8 +511,10 @@ def main():
     servers = {}
     server_attr = {}
 
+    display.screen(f'Connecting to servers...')
     for name in server_names:
         servers[name] = server_factory.get_conn_from_name(account, name)
+    display.message(f'Connecting to servers...Done!')
 
     for name, server in servers.items():
         reader = ServerReader(server)
@@ -483,20 +529,10 @@ def main():
     process = Processor(server_attr)
 
     print('Synchronization complete!')
+    print(process.difference_shows)
+    print(process.difference_movies)
+    print(process.difference_episodes)
 
 
 if __name__ == "__main__":
     main()
-
-
-# num_eps = len(watched_1)
-# for index, episode in enumerate(watched_1):
-#     show, sNum, eNum = episode.split('<->')
-#     screen('Synchronizing watched status', f'{dic_1[show]}-S{sNum}E{eNum}', index, num_eps )
-#     print(screen , end='\r')
-#     if episode in watched_2:
-#         if watched_1[episode] != watched_2[episode]:
-#             if watched_1[episode]:
-#                 get_ep(episode, conn_2, dic_2).markWatched()
-#             else:
-#                 get_ep(episode, conn_1, dic_1).markWatched()
